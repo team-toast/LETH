@@ -34,10 +34,17 @@ contract Gulper
 
     using SafeMath for uint256;
 
-    constructor () public { }
-
     address public constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     address public constant POOL = 0x5277a42ef95ECa7637fFa9E69B65A12A089FE12b;
+
+    constructor () 
+        public 
+    { 
+        IERC20Wrapper(WETH).approve(POOL, uint(-1));
+        moneyMoneyMoneyMONEY = 204189300000000; // the money already raised since the release of the audited dEth contract 
+    }
+
+    uint public moneyMoneyMoneyMONEY; 
 
     event gulped(uint _ether, uint _poolTokens, uint _pokeReward);
 
@@ -83,6 +90,7 @@ contract Gulper
         BalancerPool(POOL).joinswapExternAmountIn(WETH, wethBalanceToConvert, minTokensToClaim);
         uint poolTokensToBurn = BalancerPool(POOL).balanceOf(address(this)); 
         BalancerPool(POOL).transfer(address(1), poolTokensToBurn);
+        moneyMoneyMoneyMONEY = moneyMoneyMoneyMONEY.add(wethBalanceToConvert);
 
         IERC20Wrapper(WETH).withdraw(pokeReward);
         emit gulped(wethBalanceToConvert, poolTokensToBurn, pokeReward);
@@ -90,11 +98,15 @@ contract Gulper
     }
 
     event ethReceived(address _from, uint _amount); 
-    
-    function approveWethToPool()
+
+    function totalRaised() 
         public
+        view
+        returns (uint _totalRaised)
     {
-        IERC20Wrapper(WETH).approve(POOL, uint(-1));
+        _totalRaised = moneyMoneyMoneyMONEY
+            .add(address(this).balance)
+            .add(IERC20Wrapper(WETH).balanceOf(address(this)));  
     }
 
     function () 
