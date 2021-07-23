@@ -3,14 +3,7 @@ module dEthTestsBase
 open TestBase
 open Nethereum.Util
 open System.Numerics
-//open dEth2.Contracts.MCDSaverProxy.ContractDefinition
-//open dEth2.Contracts.VatLike.ContractDefinition
-//open DEth.Contracts.IMakerOracleAdvanced.ContractDefinition
-
 open SolidityTypes
-
-//type GiveFunctionCdp = dEth2.Contracts.ManagerLike.ContractDefinition.GiveFunction
-//type VatUrnsOutputDTO = UrnsOutputDTO
 
 module Array = 
     let removeFromEnd elem = Array.rev >> Array.skipWhile (fun i -> i = elem) >> Array.rev
@@ -56,32 +49,31 @@ let targetRatio = 220
 [<Literal>]
 let boostRatio = 220
 
-let makeOracle makerOracle daiUsd ethUsd = makeContract [| makerOracle;daiUsd;ethUsd |] "Oracle"
+let makerOracle = Contracts.MakerOracleMockContract(ethConn.GetWeb3)
+let daiUsdOracle = Contracts.ChainLinkPriceOracleMockContract(ethConn.GetWeb3)
+let ethUsdOracle = Contracts.ChainLinkPriceOracleMockContract(ethConn.GetWeb3)
 
-let makerOracle = makeContract [||] "MakerOracleMock"
-let daiUsdOracle = makeContract [||] "ChainLinkPriceOracleMock"
-let ethUsdOracle = makeContract [||] "ChainLinkPriceOracleMock"
 let makerOracleMainnet = "0x729D19f657BD0614b4985Cf1D82531c67569197B"
 let daiUsdMainnet = "0xAed0c38402a5d19df6E4c03F4E2DceD6e29c1ee9"
 let ethUsdMainnet = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419"
-let oracleContract = makeOracle makerOracle.Address daiUsdOracle.Address ethUsdOracle.Address
-let oracleContractMainnet = makeOracle makerOracleMainnet daiUsdMainnet ethUsdMainnet
+let oracleContract = Contracts.OracleContract(ethConn.GetWeb3, makerOracle.Address, daiUsdOracle.Address, ethUsdOracle.Address)
+let oracleContractMainnet = Contracts.OracleContract(ethConn.GetWeb3, makerOracleMainnet, daiUsdMainnet, ethUsdMainnet)
 
-let vatContract = ContractPlug(ethConn, getABI "VatLike", vat)
-let makerManagerAdvanced = ContractPlug(ethConn, getABI "IMakerManagerAdvanced", makerManager)
+let vatContract = Contracts.VatLikeContract(vat, ethConn.GetWeb3)
+let makerManagerAdvanced = Contracts.IMakerManagerAdvancedContract(makerManager, ethConn.GetWeb3)
 let getGulperEthBalance () = gulper |> ethConn.GetEtherBalance
 
-let toMakerPriceFormatDecimal (a:decimal) = (new BigDecimal(a) * (BigDecimal.Pow(10.0, 18.0))).Mantissa
+let toMakerPriceFormatDecimal (a:decimal) = (BigDecimal(a) * (BigDecimal.Pow(10.0, 18.0))).Mantissa
 let toMakerPriceFormat = decimal >> toMakerPriceFormatDecimal
 
-let toChainLinkPriceFormatDecimal (a:decimal) = (new BigDecimal(a) * (BigDecimal.Pow(10.0, 8.0))).Mantissa
+let toChainLinkPriceFormatDecimal (a:decimal) = (BigDecimal(a) * (BigDecimal.Pow(10.0, 8.0))).Mantissa
 let toChainLinkPriceFormatInt (a:int) = toChainLinkPriceFormatDecimal <| decimal a
 
 let initOracles priceMaker priceDaiUsd priceEthUsd =
-    makerOracle.ExecuteFunction "setData" [|toMakerPriceFormat priceMaker|] |> ignore
-    daiUsdOracle.ExecuteFunction "setData" [|toChainLinkPriceFormatDecimal priceDaiUsd|] |> ignore
-    ethUsdOracle.ExecuteFunction "setData" [|toChainLinkPriceFormatDecimal priceEthUsd|] |> ignore
-
+    makerOracle.setData(toMakerPriceFormat priceMaker) |> ignore
+    daiUsdOracle.setData(toChainLinkPriceFormatDecimal priceDaiUsd) |> ignore
+    ethUsdOracle.setData(toChainLinkPriceFormatDecimal priceEthUsd) |> ignore
+    
 // percent is normalized to range [0, 1]
 let initOraclesDefault percentDiffNormalized =
     let priceMaker = 10 // can be any value
@@ -93,13 +85,13 @@ let initOraclesDefault percentDiffNormalized =
 
     decimal priceMaker, decimal priceDaiUsd, priceNonMakerDaiEth, priceEthUsd
 
-let getDEthContractFromOracle (oracleContract:ContractPlug) initialRecipientIsTestAccount =
+let getDEthContractFromOracle (oracleContract:Contracts.OracleContract) initialRecipientIsTestAccount =
     let initialRecipient = if initialRecipientIsTestAccount then ethConn.Account.Address else initialRecipient
 
-    let contract = makeContract [|gulper;cdpId;oracleContract.Address;initialRecipient;foundryTreasury|] "dEth"
+    let contract = Contracts.dEthContract(ethConn.GetWeb3, gulper, cdpId, oracleContract.Address, initialRecipient, foundryTreasury)
 
-    let authorityAddress = contract.Query<string> "authority" [||]
-    let authority = ContractPlug(ethConn, getABI "DSAuthority", authorityAddress)
+    let authorityAddress = contract.ContractPlug.Query<string> "authority" [||]
+    let authority = Contracts.DSAuthorityContract(authorityAddress, ethConn.GetWeb3)
 
     authority, contract
 
@@ -117,8 +109,8 @@ let getDEthContractEthConn () =
     |> shouldSucceed
 
     // check that we now own the cdp.
-    let makerManagerContract = ContractPlug(ethConn, getABI "IMakerManagerAdvanced", makerManager)
-    let cdpOwner = makerManagerContract.Query<string> "owns" [|cdpId|]
+    let makerManagerContract = Contracts.IMakerManagerAdvancedContract(makerManager, ethConn.GetWeb3)// ContractPlug(ethConn, getABI "IMakerManagerAdvanced", makerManager)
+    let cdpOwner = makerManagerContract.ContractPlug.Query<string> "owns" [|cdpId|]
     cdpOwner |> shouldEqualIgnoringCase contract.Address
 
     contract
@@ -126,36 +118,37 @@ let getDEthContractEthConn () =
 let dEthContract = getDEthContractEthConn ()
 
 let getMockDSValueFormat (priceFormatted:BigInteger) =
-    let mockDSValue = makeContract [||] "DSValueMock"
-    mockDSValue.ExecuteFunction "setData" [|priceFormatted |] |> ignore
-    mockDSValue
+    let dSValueMock = Contracts.DSValueMockContract(ethConn.GetWeb3)
+    dSValueMock.setData(priceFormatted) |> ignore
+
+    dSValueMock
 
 let getMockDSValue price = toMakerPriceFormat price |> getMockDSValueFormat
 
-let getManuallyComputedCollateralValues (oracleContract: ContractPlug) saverProxy (cdpId:bigint) =
-    let priceEthDai = (oracleContract.Query<bigint> "getEthDaiPrice") [||]
+let getManuallyComputedCollateralValues (oracleContract: Contracts.OracleContract) saverProxy (cdpId:bigint) =
+    let priceEthDai = (oracleContract.ContractPlug.Query<bigint> "getEthDaiPrice") [||]
     let priceRay = BigInteger.Multiply(BigInteger.Pow(bigint 10, 9), priceEthDai)
-    let saverProxy = ContractPlug(ethConn, getABI "MCDSaverProxy", saverProxy)
-    let cdpDetailedInfoOutput = saverProxy.QueryObj<Contracts.MCDSaverProxyContract.getCdpDetailedInfoOutputDTO> "getCdpDetailedInfo" [|cdpId|]
+    let saverProxy = Contracts.MCDSaverProxyContract(saverProxy, ethConn.GetWeb3)
+    let cdpDetailedInfoOutput = saverProxy.ContractPlug.QueryObj<Contracts.MCDSaverProxyContract.getCdpDetailedInfoOutputDTO> "getCdpDetailedInfo" [|cdpId|]
     let collateralDenominatedDebt = rdiv cdpDetailedInfoOutput.debt priceRay
     let excessCollateral = cdpDetailedInfoOutput.collateral - collateralDenominatedDebt
 
     (priceEthDai, priceRay, saverProxy, cdpDetailedInfoOutput, collateralDenominatedDebt, excessCollateral)
 
-let getInkAndUrnFromCdp (cdpManagerContract:ContractPlug) cdpId =
-    let ilkBytes = cdpManagerContract.Query<byte[]> "ilks" [|cdpId|] |> Array.removeFromEnd (byte 0)
-    let urn = cdpManagerContract.Query<string> "urns" [|cdpId|]
+let getInkAndUrnFromCdp (cdpManagerContract:Contracts.IMakerManagerAdvancedContract) cdpId =
+    let ilkBytes = cdpManagerContract.ContractPlug.Query<byte[]> "ilks" [|cdpId|] |> Array.removeFromEnd (byte 0)
+    let urn = cdpManagerContract.ContractPlug.Query<string> "urns" [|cdpId|]
     (ilkBytes, urn)
 
 let getInk () =
     let (ilk, urn) = getInkAndUrnFromCdp makerManagerAdvanced cdpId
     
-    (vatContract.QueryObj<Contracts.VatLikeContract.urnsOutputDTO> "urns" [|ilk; urn|]).Prop0
+    (vatContract.ContractPlug.QueryObj<Contracts.VatLikeContract.urnsOutputDTO> "urns" [|ilk; urn|]).Prop0
 
 let findActiveCDP ilkArg =
-    let cdpManagerContract = ContractPlug(ethConn, getABI "IMakerManagerAdvanced", makerManager)
-    let vatContract = ContractPlug(ethConn, getABI "VatLike", vat)
-    let maxCdpId = cdpManagerContract.Query<bigint> "cdpi" [||]
+    let cdpManagerContract = Contracts.IMakerManagerAdvancedContract(makerManager, ethConn.GetWeb3)
+    let vatContract = Contracts.VatLikeContract(vat, ethConn.GetWeb3)
+    let maxCdpId = cdpManagerContract.ContractPlug.Query<bigint> "cdpi" [||]
     
     let cdpIds = (Seq.initInfinite (fun i -> maxCdpId - bigint i) ) |> Seq.takeWhile (fun i -> i > BigInteger.Zero)
 
@@ -163,7 +156,7 @@ let findActiveCDP ilkArg =
     let isCDPActive cdpId =
         let (ilkBytes, urn) = getInkAndUrnFromCdp cdpId
         let ilk = System.Text.Encoding.UTF8.GetString(ilkBytes)
-        let urnsOutput = vatContract.QueryObj<Contracts.VatLikeContract.urnsOutputDTO> "urns" [|ilk;urn|]
+        let urnsOutput = vatContract.ContractPlug.QueryObj<Contracts.VatLikeContract.urnsOutputDTO> "urns" [|ilk;urn|]
 
         urnsOutput.Prop1 <> bigint 0 && urnsOutput.Prop0 <> bigint 0 && ilk = ilkArg
 
@@ -186,8 +179,8 @@ let calculateRedemptionValue tokensToRedeem totalSupply excessCollateral automat
 
     (protocolFee, automationFee, collateralRedeemed, collateralReturned)
 
-let queryStateAndCalculateRedemptionValue (dEthContract:ContractPlug) tokensAmount =
-    let dEthQuery name = dEthContract.Query<bigint> name [||]
+let queryStateAndCalculateRedemptionValue (dEthContract:Contracts.dEthContract) tokensAmount =
+    let dEthQuery name = dEthContract.ContractPlug.Query<bigint> name [||]
     calculateRedemptionValue tokensAmount (dEthQuery "totalSupply") (dEthQuery "getExcessCollateral") (dEthQuery "automationFeePerc")
 
 let calculateIssuanceAmount suppliedCollateral automationFeePerc excessCollateral totalSupply =
@@ -200,19 +193,16 @@ let calculateIssuanceAmount suppliedCollateral automationFeePerc excessCollatera
     
     (protocolFee, automationFee, actualCollateralAdded, accreditedCollateral, tokensIssued)
 
-let queryStateAndCalculateIssuanceAmount (dEthContract:ContractPlug) weiValue = 
-    let dEthQuery name = dEthContract.Query<bigint> name [||]
+let queryStateAndCalculateIssuanceAmount (dEthContract:Contracts.dEthContract) weiValue = 
+    let dEthQuery name = dEthContract.ContractPlug.Query<bigint> name [||]
     calculateIssuanceAmount weiValue (dEthQuery "automationFeePerc") (dEthQuery "getExcessCollateral") (dEthQuery "totalSupply")
 
-let makeRiskLimitLessThanExcessCollateral (dEthContract:ContractPlug) =
-    let dEthQuery name = dEthContract.Query<bigint> name [||]
+let makeRiskLimitLessThanExcessCollateral (dEthContract:Contracts.dEthContract) =
+    let dEthQuery name = dEthContract.ContractPlug.Query<bigint> name [||]
     let excessCollateral = dEthQuery "getExcessCollateral"
     let ratioBetweenRiskLimitAndExcessCollateral = 0.9M // hardcoded to be less than one - so that risk limit is less than excess collateral
     let riskLimit = toBigDecimal excessCollateral * BigDecimal(ratioBetweenRiskLimitAndExcessCollateral) |> toBigInt
-    dEthContract.ExecuteFunction "changeSettings" 
-        [|(dEthQuery "minRedemptionRatio") / ratio; 
-        dEthQuery "automationFeePerc"; 
-        riskLimit|]
+    dEthContract.changeSettings((dEthQuery "minRedemptionRatio") / ratio, dEthQuery "automationFeePerc", riskLimit)
 
 // note: this is used to be able to specify owner and contract addresses in inlinedata (we cannot use DUs in attributes)
 let mapInlineDataArgumentToAddress inlineDataArgument calledContractAddress =

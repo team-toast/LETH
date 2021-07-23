@@ -8,25 +8,6 @@
     <EmbeddedResource Remove="ContractDefinition\**" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="DTOs/ForwarderDefinition.fs" />
-    <Compile Include="DTOs/DebugDefinition.fs" />
-    <Compile Include="DTOs/TestTokenDefinition.fs" />
-    <Compile Include="DTOs/BucketSaleDefinition.fs" />
-    <Compile Include="DTOs/DEthDefinition.fs" />
-    <Compile Include="DTOs/IMCDSaverProxyDefinition.fs" />
-    <Compile Include="DTOs/MCDSaverProxyDefinition.fs" />
-    <Compile Include="DTOs/SaverProxyActionsDefinition.fs" />
-    <Compile Include="DTOs/IMedianETHUSDDefinition.fs" />
-    <Compile Include="DTOs/IPriceFeedDefinition.fs" />
-    <Compile Include="DTOs/IMakerOracleAdvancedDefinition.fs" />
-    <Compile Include="DTOs/DSValueMockDefinition.fs" />
-    <Compile Include="DTOs/CatDefinition.fs" />
-    <Compile Include="DTOs/IMakerManagerAdvancedDefinition.fs" />
-    <Compile Include="DTOs/VatLikeDefinition.fs" />
-    <Compile Include="DTOs/ISpotterDefinition.fs" />
-    <Compile Include="DTOs/PipLikeDefinition.fs" />
-    <Compile Include="DTOs/IFlipperDefinition.fs" />
-    <Compile Include="DTOs/ManagerLikeDefinition.fs" />
     <Compile Include="Constants.fs" />
     <Compile Include="TestBase.fs" />
     <Compile Include="dEthTestsBase.fs" />
@@ -42,7 +23,7 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="16.4.0" />
     <!--PackageReference Include="Nethereum.Web3" Version="5.0.101" /-->
     <PackageReference Include="Nethereum.Web3" Version="3.8.0" />
-    <PackageReference Include="SolidityProvider" Version="1.0.7" />
+    <PackageReference Include="SolidityProvider" Version="1.1.2" />
     <PackageReference Include="xunit" Version="2.4.1" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.4.1">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
