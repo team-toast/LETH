@@ -90,7 +90,7 @@ let getDEthContractFromOracle (oracleContract:Contracts.OracleContract) initialR
 
     let contract = Contracts.dEthContract(ethConn.GetWeb3, gulper, cdpId, oracleContract.Address, initialRecipient, foundryTreasury)
 
-    let authorityAddress = contract.ContractPlug.Query<string> "authority" [||]
+    let authorityAddress = contract.authorityQuery()
     let authority = Contracts.DSAuthorityContract(authorityAddress, ethConn.GetWeb3)
 
     authority, contract
@@ -109,8 +109,8 @@ let getDEthContractEthConn () =
     |> shouldSucceed
 
     // check that we now own the cdp.
-    let makerManagerContract = Contracts.IMakerManagerAdvancedContract(makerManager, ethConn.GetWeb3)// ContractPlug(ethConn, getABI "IMakerManagerAdvanced", makerManager)
-    let cdpOwner = makerManagerContract.ContractPlug.Query<string> "owns" [|cdpId|]
+    let makerManagerContract = Contracts.IMakerManagerAdvancedContract(makerManager, ethConn.GetWeb3)
+    let cdpOwner = makerManagerContract.ownsQuery(cdpId)
     cdpOwner |> shouldEqualIgnoringCase contract.Address
 
     contract
@@ -126,29 +126,29 @@ let getMockDSValueFormat (priceFormatted:BigInteger) =
 let getMockDSValue price = toMakerPriceFormat price |> getMockDSValueFormat
 
 let getManuallyComputedCollateralValues (oracleContract: Contracts.OracleContract) saverProxy (cdpId:bigint) =
-    let priceEthDai = (oracleContract.ContractPlug.Query<bigint> "getEthDaiPrice") [||]
+    let priceEthDai = oracleContract.getEthDaiPriceQuery()
     let priceRay = BigInteger.Multiply(BigInteger.Pow(bigint 10, 9), priceEthDai)
     let saverProxy = Contracts.MCDSaverProxyContract(saverProxy, ethConn.GetWeb3)
-    let cdpDetailedInfoOutput = saverProxy.ContractPlug.QueryObj<Contracts.MCDSaverProxyContract.getCdpDetailedInfoOutputDTO> "getCdpDetailedInfo" [|cdpId|]
+    let cdpDetailedInfoOutput = saverProxy.getCdpDetailedInfoQuery(cdpId)
     let collateralDenominatedDebt = rdiv cdpDetailedInfoOutput.debt priceRay
     let excessCollateral = cdpDetailedInfoOutput.collateral - collateralDenominatedDebt
 
     (priceEthDai, priceRay, saverProxy, cdpDetailedInfoOutput, collateralDenominatedDebt, excessCollateral)
 
 let getInkAndUrnFromCdp (cdpManagerContract:Contracts.IMakerManagerAdvancedContract) cdpId =
-    let ilkBytes = cdpManagerContract.ContractPlug.Query<byte[]> "ilks" [|cdpId|] |> Array.removeFromEnd (byte 0)
-    let urn = cdpManagerContract.ContractPlug.Query<string> "urns" [|cdpId|]
+    let ilkBytes = cdpManagerContract.ilksQuery(cdpId) |> Array.removeFromEnd (byte 0)
+    let urn = cdpManagerContract.urnsQuery(cdpId)
     (ilkBytes, urn)
 
 let getInk () =
     let (ilk, urn) = getInkAndUrnFromCdp makerManagerAdvanced cdpId
     
-    (vatContract.ContractPlug.QueryObj<Contracts.VatLikeContract.urnsOutputDTO> "urns" [|ilk; urn|]).Prop0
+    (vatContract.urnsQuery(ilk, urn)).Prop0
 
 let findActiveCDP ilkArg =
     let cdpManagerContract = Contracts.IMakerManagerAdvancedContract(makerManager, ethConn.GetWeb3)
     let vatContract = Contracts.VatLikeContract(vat, ethConn.GetWeb3)
-    let maxCdpId = cdpManagerContract.ContractPlug.Query<bigint> "cdpi" [||]
+    let maxCdpId = cdpManagerContract.cdpiQuery()
     
     let cdpIds = (Seq.initInfinite (fun i -> maxCdpId - bigint i) ) |> Seq.takeWhile (fun i -> i > BigInteger.Zero)
 
@@ -156,7 +156,7 @@ let findActiveCDP ilkArg =
     let isCDPActive cdpId =
         let (ilkBytes, urn) = getInkAndUrnFromCdp cdpId
         let ilk = System.Text.Encoding.UTF8.GetString(ilkBytes)
-        let urnsOutput = vatContract.ContractPlug.QueryObj<Contracts.VatLikeContract.urnsOutputDTO> "urns" [|ilk;urn|]
+        let urnsOutput = vatContract.urnsQuery(ilkBytes,urn)
 
         urnsOutput.Prop1 <> bigint 0 && urnsOutput.Prop0 <> bigint 0 && ilk = ilkArg
 
@@ -180,8 +180,7 @@ let calculateRedemptionValue tokensToRedeem totalSupply excessCollateral automat
     (protocolFee, automationFee, collateralRedeemed, collateralReturned)
 
 let queryStateAndCalculateRedemptionValue (dEthContract:Contracts.dEthContract) tokensAmount =
-    let dEthQuery name = dEthContract.ContractPlug.Query<bigint> name [||]
-    calculateRedemptionValue tokensAmount (dEthQuery "totalSupply") (dEthQuery "getExcessCollateral") (dEthQuery "automationFeePerc")
+    calculateRedemptionValue tokensAmount (dEthContract.totalSupplyQuery()) (dEthContract.getExcessCollateralQuery()) (dEthContract.automationFeePercQuery())
 
 let calculateIssuanceAmount suppliedCollateral automationFeePerc excessCollateral totalSupply =
     let protocolFee = suppliedCollateral * protocolFeePercent / hundredPerc
@@ -194,15 +193,13 @@ let calculateIssuanceAmount suppliedCollateral automationFeePerc excessCollatera
     (protocolFee, automationFee, actualCollateralAdded, accreditedCollateral, tokensIssued)
 
 let queryStateAndCalculateIssuanceAmount (dEthContract:Contracts.dEthContract) weiValue = 
-    let dEthQuery name = dEthContract.ContractPlug.Query<bigint> name [||]
-    calculateIssuanceAmount weiValue (dEthQuery "automationFeePerc") (dEthQuery "getExcessCollateral") (dEthQuery "totalSupply")
+    calculateIssuanceAmount weiValue (dEthContract.automationFeePercQuery()) (dEthContract.getExcessCollateralQuery()) (dEthContract.totalSupplyQuery())
 
 let makeRiskLimitLessThanExcessCollateral (dEthContract:Contracts.dEthContract) =
-    let dEthQuery name = dEthContract.ContractPlug.Query<bigint> name [||]
-    let excessCollateral = dEthQuery "getExcessCollateral"
+    let excessCollateral = dEthContract.getExcessCollateralQuery()
     let ratioBetweenRiskLimitAndExcessCollateral = 0.9M // hardcoded to be less than one - so that risk limit is less than excess collateral
     let riskLimit = toBigDecimal excessCollateral * BigDecimal(ratioBetweenRiskLimitAndExcessCollateral) |> toBigInt
-    dEthContract.changeSettings((dEthQuery "minRedemptionRatio") / ratio, dEthQuery "automationFeePerc", riskLimit)
+    dEthContract.changeSettings((dEthContract.minRedemptionRatioQuery()) / ratio, dEthContract.automationFeePercQuery(), riskLimit)
 
 // note: this is used to be able to specify owner and contract addresses in inlinedata (we cannot use DUs in attributes)
 let mapInlineDataArgumentToAddress inlineDataArgument calledContractAddress =

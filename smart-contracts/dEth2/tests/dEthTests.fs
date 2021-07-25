@@ -27,9 +27,9 @@ let ``inits to provided parameters`` () =
     let (makerOracle, daiUsdOracle, ethUsdOracle) = (makeAccount().Address, makeAccount().Address, makeAccount().Address)
     let contract = Contracts.OracleContract(ethConn.GetWeb3, makerOracle, daiUsdOracle, ethUsdOracle)
 
-    shouldEqualIgnoringCase makerOracle (contract.ContractPlug.Query<string> "makerOracle" [||])
-    shouldEqualIgnoringCase daiUsdOracle (contract.ContractPlug.Query<string> "daiUsdOracle" [||])
-    shouldEqualIgnoringCase ethUsdOracle (contract.ContractPlug.Query<string> "ethUsdOracle" [||])
+    shouldEqualIgnoringCase makerOracle (contract.makerOracleQuery ())
+    shouldEqualIgnoringCase daiUsdOracle (contract.daiUsdOracleQuery ())
+    shouldEqualIgnoringCase ethUsdOracle (contract.ethUsdOracleQuery ())
 
 [<Specification("Oracle", "getEthDaiPrice", 0)>]
 [<Theory>]
@@ -41,7 +41,7 @@ let ``price is correct given source prices within ten percents of one another`` 
 
     let (priceMaker, _, priceNonMakerDaiEth, _) = initOraclesDefault differencePercent
 
-    let price = oracleContract.ContractPlug.Query<bigint> "getEthDaiPrice" [||]
+    let price = oracleContract.getEthDaiPriceQuery()
 
     let expected =
         if differencePercent <= 0.1M
@@ -61,22 +61,22 @@ let ``initializes with correct values and rights assigned`` () =
 
     // check the rights
     let functionName = Web3.Sha3("changeSettings(uint256,uint256,uint256)").Substring(0, 8).HexToByteArray()
-    let canCall = authority.ContractPlug.Query<bool> "canCall" [|foundryTreasury; contract.Address; functionName |]
+    let canCall = authority.canCallQuery (foundryTreasury, contract.Address, functionName)
 
     // check the balance of initialRecipient
-    let balanceOfInitialRecipient = contract.ContractPlug.Query<bigint> "balanceOf" [|initialRecipient|]
+    let balanceOfInitialRecipient = contract.balanceOfQuery(initialRecipient)
 
-    shouldEqualIgnoringCase gulper (contract.ContractPlug.Query<string> "gulper" [||])
-    shouldEqualIgnoringCase proxyCache (contract.ContractPlug.Query<string> "cache" [||])
-    should equal cdpId (contract.ContractPlug.Query<bigint> "cdpId" [||])
-    shouldEqualIgnoringCase makerManager (contract.ContractPlug.Query<string> "makerManager" [||])
-    shouldEqualIgnoringCase ethGemJoin (contract.ContractPlug.Query<string> "ethGemJoin" [||])
-    shouldEqualIgnoringCase saverProxy (contract.ContractPlug.Query<string> "saverProxy" [||])
-    shouldEqualIgnoringCase saverProxyActions (contract.ContractPlug.Query<string> "saverProxyActions" [||])
-    shouldEqualIgnoringCase oracleContractMainnet.Address (contract.ContractPlug.Query<string> "oracle" [||])
-    should equal true canCall
+    shouldEqualIgnoringCase gulper <| contract.gulperQuery()
+    shouldEqualIgnoringCase proxyCache <| contract.cacheQuery()
+    should equal cdpId <| contract.cdpIdQuery()
+    shouldEqualIgnoringCase makerManager <| contract.makerManagerQuery()
+    shouldEqualIgnoringCase ethGemJoin <| contract.ethGemJoinQuery()
+    shouldEqualIgnoringCase saverProxy <| contract.saverProxyQuery()
+    shouldEqualIgnoringCase saverProxyActions <| contract.saverProxyActionsQuery()
+    shouldEqualIgnoringCase oracleContractMainnet.Address <| contract.oracleQuery()
+    should be True canCall
     should greaterThan BigInteger.Zero balanceOfInitialRecipient
-    dEthContract.ContractPlug.Query<bigint> "minRedemptionRatio" [||] |> should equal <| (bigint 160) * ratio
+    dEthContract.minRedemptionRatioQuery() |> should equal <| (bigint 160) * ratio
 
 [<Specification("dEth", "changeGulper", 0)>]
 [<Fact>]
@@ -85,7 +85,7 @@ let ``can be changed by owner`` () =
     let contract = getDEthContract ()
     let randomAddress = makeAccount().Address
     contract.changeGulper(randomAddress) |> ignore
-    shouldEqualIgnoringCase randomAddress <| contract.ContractPlug.Query<string> "gulper" [||]
+    shouldEqualIgnoringCase randomAddress <| contract.gulperQuery()
 
 [<Specification("dEth", "changeGulper", 1)>]
 [<Fact>]
@@ -93,14 +93,14 @@ let ``cannot be changed by non-owner`` () =
     restore ()
     let contract = getDEthContract ()
     let account = Account(hardhatPrivKey2)
-    let oldGulper = contract.ContractPlug.Query<string> "gulper" [||]
+    let oldGulper = contract.gulperQuery()
 
     let debug = Debug(EthereumConnection(hardhatURI, account.PrivateKey))
-    let data = contract.ContractPlug.FunctionData "changeGulper" [|account.Address|] 
+    let data = contract.changeGulperData(account.Address)
     let receipt = debug.Forward(contract.Address,  data)
     let forwardEvent = debug.DecodeForwardedEvents receipt |> Seq.head
     forwardEvent |> shouldRevertWithUnknownMessage
-    shouldEqualIgnoringCase oldGulper <| contract.ContractPlug.Query<string> "gulper" [||]
+    shouldEqualIgnoringCase oldGulper <| contract.gulperQuery()
 
 let giveCDPToDSProxyTestBase shouldThrow = 
     restore ()
@@ -109,7 +109,7 @@ let giveCDPToDSProxyTestBase shouldThrow =
     let executeGiveCDPFromPrivateKey shouldThrow =
         if shouldThrow then 
             let debug = Debug(EthereumConnection(hardhatURI, hardhatPrivKey2))
-            let data = dEthContract.ContractPlug.FunctionData "giveCDPToDSProxy" [|newContract.Address|]
+            let data = dEthContract.giveCDPToDSProxyData(newContract.Address)
             debug.Forward(newContract.Address, data)
         else 
             dEthContract.giveCDPToDSProxy(newContract.Address)
@@ -121,7 +121,7 @@ let giveCDPToDSProxyTestBase shouldThrow =
         forwardEvent |> shouldRevertWithUnknownMessage
     else
         giveCDPToDSProxyReceipt.Succeeded () |> should equal true
-        dEthContract.ContractPlug.Query "riskLimit" [||] |> should equal (BigInteger 0)
+        dEthContract.riskLimitQuery() |> should equal (BigInteger 0)
 
 
 [<Specification("dEth", "giveCDPToDSProxy", 0)>]
@@ -138,7 +138,7 @@ let ``dEth - getCollateral - returns similar values as those directly retrieved 
     restore ()
     let contract = getDEthContract ()
 
-    let getCollateralOutput = contract.ContractPlug.QueryObj<Contracts.dEthContract.getCollateralOutputDTO> "getCollateral" [||]
+    let getCollateralOutput = contract.getCollateralQuery()
     let (_, priceRay, _, cdpDetailedInfoOutput, collateralDenominatedDebt, excessCollateral) = 
         getManuallyComputedCollateralValues oracleContractMainnet saverProxy cdpId
     
@@ -154,10 +154,10 @@ let ``dEth - getCollateralPriceRAY - returns similar values as those directly re
     restore ()
     let contract = getDEthContract ()
 
-    let ethDaiPrice = oracleContractMainnet.ContractPlug.Query<bigint> "getEthDaiPrice" [||]
+    let ethDaiPrice = oracleContractMainnet.getEthDaiPriceQuery()
     let expectedRay = BigInteger.Pow(bigint 10, 9) * ethDaiPrice
 
-    let actualRay = contract.ContractPlug.Query<bigint> "getCollateralPriceRAY" [||]
+    let actualRay = contract.getCollateralPriceRAYQuery()
     should equal expectedRay actualRay
 
 [<Specification("dEth", "getExcessCollateral", 0)>]
@@ -168,7 +168,7 @@ let ``dEth - getExcessCollateral - returns similar values as those directly retr
 
     let (_, _, _, _, _, excessCollateral) = getManuallyComputedCollateralValues oracleContractMainnet saverProxy cdpId
 
-    let actual = contract.ContractPlug.Query<bigint> "getExcessCollateral" [||]
+    let actual = contract.getExcessCollateralQuery()
     should equal excessCollateral actual
 
 [<Specification("dEth", "getRatio", 0)>]
@@ -179,9 +179,9 @@ let ``dEth - getRatio - returns similar values as those directly retrieved from 
     let saverProxyContract = Contracts.MCDSaverProxyContract(saverProxy, ethConn.GetWeb3)
     let manager = Contracts.ManagerLikeContract(makerManager, ethConn.GetWeb3)
 
-    let ilk = manager.ContractPlug.Query<string> "ilks" [|cdpId|]
-    let price = saverProxyContract.ContractPlug.Query<bigint> "getPrice" [|ilk|]
-    let getCdpInfoOutputDTO = saverProxyContract.ContractPlug.QueryObj<Contracts.MCDSaverProxyContract.getCdpInfoOutputDTO> "getCdpInfo" [|manager.Address;cdpId;ilk|]
+    let ilk = manager.ilksQuery(cdpId)
+    let price = saverProxyContract.getPriceQuery (ilk)
+    let getCdpInfoOutputDTO = saverProxyContract.getCdpInfoQuery(manager.Address,cdpId,ilk)
 
     let expected = 
         if getCdpInfoOutputDTO.Prop1 = BigInteger.Zero 
@@ -190,7 +190,7 @@ let ``dEth - getRatio - returns similar values as those directly retrieved from 
         else 
             rdiv (wmul getCdpInfoOutputDTO.Prop0 price) getCdpInfoOutputDTO.Prop1
 
-    let actual = contract.ContractPlug.Query<bigint> "getRatio" [||]
+    let actual = contract.getRatioQuery()
 
     should equal expected actual
 
@@ -211,9 +211,9 @@ let ``dEth - changeSettings - an authorised address can change the settings`` (a
 
     changeSettingsTxr |> shouldSucceed
 
-    dEthContract.ContractPlug.Query<bigint> "minRedemptionRatio" [||] |> should equal <| (bigint minRedemptionRatioExpected) * ratio
-    dEthContract.ContractPlug.Query<bigint> "automationFeePerc" [||] |> should equal (bigint automationFeePercExpected)
-    dEthContract.ContractPlug.Query<bigint> "riskLimit" [||] |> should equal (bigint riskLimitExpected)
+    dEthContract.minRedemptionRatioQuery() |> should equal <| (bigint minRedemptionRatioExpected) * ratio
+    dEthContract.automationFeePercQuery() |> should equal (bigint automationFeePercExpected)
+    dEthContract.riskLimitQuery() |> should equal (bigint riskLimitExpected)
 
     let event = changeSettingsTxr.DecodeAllEvents<Contracts.dEthContract.SettingsChangedEventDTO>() |> Seq.map (fun i -> i.Event) |> Seq.head
     event._minRedemptionRatio |> should equal <| (bigint minRedemptionRatioExpected) * ratio
@@ -227,7 +227,7 @@ let ``dEth - changeSettings - an unauthorised address cannot change the automati
     restore ()
 
     let debug = Debug(EthereumConnection(hardhatURI, makeAccountWithBalance().PrivateKey))
-    let data = dEthContract.ContractPlug.FunctionData "changeSettings" [|minRedemptionRatioExpected;automationFeePercExpected;riskLimitExpected|]
+    let data = dEthContract.changeSettingsData(bigint minRedemptionRatioExpected, bigint automationFeePercExpected, bigint riskLimitExpected)
 
     debug.Forward(dEthContract.Address, data)
     |> debug.DecodeForwardedEvents
@@ -287,11 +287,11 @@ let ``blah dEth - redeem - someone with a positive balance of dEth can redeem th
 [<Specification("dEth", "redeem", 1)>]
 [<Theory>]
 [<InlineData(10000)>]
-let ``dEth - redeem - someone without a balance can never redeem Ether`` tokensAmount =
+let ``dEth - redeem - someone without a balance can never redeem Ether`` (tokensAmount: int) =
     restore ()
 
     let debug = Debug(EthereumConnection(hardhatURI, makeAccountWithBalance().PrivateKey)) // the balance is needed for gas vs for sending ether value.
-    let data = dEthContract.ContractPlug.FunctionData "redeem" [|makeAccount().Address;tokensAmount|]
+    let data = dEthContract.redeemData(makeAccount().Address, bigint tokensAmount)
     
     debug.Forward(dEthContract.Address, data)
     |> debug.DecodeForwardedEvents
@@ -315,8 +315,8 @@ let ``dEth - squanderMyEthForWorthlessBeansAndAgreeToTerms - anyone providing a 
     let inkBefore = getInk ()
     let gulperBalanceBefore = getGulperEthBalance ()
     
-    dEthContract.ContractPlug.Query<bigint> "getExcessCollateral" [||]
-    |> should lessThan (dEthContract.ContractPlug.Query<bigint> "riskLimit" [||] + providedCollateralBigInt)
+    dEthContract.getExcessCollateralQuery()
+    |> should lessThan (dEthContract.riskLimitQuery() + providedCollateralBigInt)
     
     let (protocolFeeExpected, automationFeeExpected, actualCollateralAddedExpected, accreditedCollateralExpected, tokensIssuedExpected) = 
         queryStateAndCalculateIssuanceAmount dEthContract providedCollateralBigInt
@@ -348,7 +348,7 @@ let ``dEth - squanderMyEthForWorthlessBeansAndAgreeToTerms - the riskLevel canno
 
     makeRiskLimitLessThanExcessCollateral dEthContract |> shouldSucceed
 
-    let data = dEthContract.ContractPlug.FunctionData "squanderMyEthForWorthlessBeansAndAgreeToTerms" [|makeAccount().Address|]
+    let data = dEthContract.squanderMyEthForWorthlessBeansAndAgreeToTermsData(makeAccount().Address)
     debug.Forward(dEthContract.Address, data)
     |> debug.DecodeForwardedEvents
     |> Seq.head
