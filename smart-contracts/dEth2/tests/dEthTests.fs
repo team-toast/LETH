@@ -14,6 +14,7 @@ open Nethereum.Web3.Accounts
 open Nethereum.RPC.Eth.DTOs
 open Nethereum.Contracts
 open SolidityTypes
+open SolidityProviderNamespace
 
 type System.String with
    member s1.icompare(s2: string) =
@@ -41,7 +42,7 @@ let ``price is correct given source prices within ten percents of one another`` 
 
     let (priceMaker, _, priceNonMakerDaiEth, _) = initOraclesDefault differencePercent
 
-    let price = oracleContract.getEthDaiPriceQuery()
+    let price = oracleContract.getEthDaiPriceQueryAsync() |> runNow
 
     let expected =
         if differencePercent <= 0.1M
@@ -324,7 +325,7 @@ let ``dEth - squanderMyEthForWorthlessBeansAndAgreeToTerms - anyone providing a 
     let dEthRecipientAddress = ethConn.Account.Address
     let balanceBefore = balanceOf dEthContract dEthRecipientAddress
 
-    let squanderTxr = dEthContract.ContractPlug.ExecuteFunctionAsyncWithValue providedCollateralBigInt "squanderMyEthForWorthlessBeansAndAgreeToTerms" [|dEthRecipientAddress|] |> runNow
+    let squanderTxr = dEthContract.squanderMyEthForWorthlessBeansAndAgreeToTerms(dEthRecipientAddress, weiValue providedCollateralBigInt)
     squanderTxr |> shouldSucceed
 
     balanceOf dEthContract dEthRecipientAddress |> should equal (balanceBefore + tokensIssuedExpected)
