@@ -477,3 +477,61 @@ contract dEth is
             riskLimit);
     }
 }
+
+contract EthDaiOracle
+{
+    using SafeMath for uint256;
+
+    uint constant ONE_PERC = 10**16; // 1.0%
+    uint constant HUNDRED_PERC = 10**18; // 100.0%
+
+    IChainLinkPriceOracle public daiUsdOracle;
+    IChainLinkPriceOracle public ethUsdOracle;
+
+    constructor ( 
+            IChainLinkPriceOracle _daiUsdOracle, 
+            IChainLinkPriceOracle _ethUsdOracle) 
+        public
+    {
+        daiUsdOracle = _daiUsdOracle;
+        ethUsdOracle = _ethUsdOracle;
+    }   
+
+    function getEthDaiPrice() 
+        public
+        view
+        returns (uint _price)
+    {
+        // chainlink's price comes back as a decimal with 8 places
+        (,int chainlinkEthUsdPrice,,,) = ethUsdOracle.latestRoundData();
+        (,int chainlinkDaiUsdPrice,,,) = daiUsdOracle.latestRoundData();
+
+        // chainlink's price comes back as a decimal with 8 places
+        // multiplying two of them, produces 16 places
+        // we need it in the WAD format which has 18, therefore .mul(10**2) at the end
+        uint chainlinkEthDaiPrice = uint(chainlinkEthUsdPrice).mul(uint(chainlinkDaiUsdPrice)).mul(10**2);
+    
+        return chainlinkEthDaiPrice;
+    }
+}
+
+contract dEth_ChangeOracle is dEth 
+{
+    constructor(
+            address payable _gulper,
+            uint _cdpId,
+            Oracle _oracle,
+            address _initialRecipient,
+            address _automationAuthority)
+        public
+        dEth (_gulper, _cdpId, _oracle, _initialRecipient, _automationAuthority)
+    {
+
+    }
+
+    function changeOracle(Oracle _newOracle)
+        public
+    {
+        oracle = _newOracle;
+    }
+}

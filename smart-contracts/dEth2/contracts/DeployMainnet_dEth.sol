@@ -27,3 +27,30 @@ contract DeployMainnet_dEth
         emit LogContracts(oracle, mainnet_dEth);
     }
 }
+
+contract DeployMainnet_dEth_newOracle 
+{
+    event LogContracts(Oracle _oracle, dEth _dEth);
+
+    constructor()
+        public
+    {
+        EthDaiOracle oracle = new EthDaiOracle(
+            IChainLinkPriceOracle(0xAed0c38402a5d19df6E4c03F4E2DceD6e29c1ee9),        //_daiUsdOracle
+            IChainLinkPriceOracle(0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419));       //_ethUsdOracle
+
+        // this contract will only think it is a dEth contract. 
+        // we're going to use to to call 
+        dEth mainnet_dEth = new dEth_ChangeOracle(
+            0xD7DFA44E3dfeB1A1E65544Dc54ee02B9CbE1e66d,                 //_gulper,
+            18963,                                                      //_cdpId,
+            Oracle(address(oracle)),                                    //_oracle
+
+            0xB7c6bB064620270F8c1daA7502bCca75fC074CF4,                 //_initialRecipient
+            0x93fE7D1d24bE7CB33329800ba2166f4D28Eaa553);                //_foundryTreasury)           
+
+        mainnet_dEth.setOwner(msg.sender);
+
+        emit LogContracts(Oracle(address(oracle)), mainnet_dEth);
+    }
+}
