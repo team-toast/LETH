@@ -1,3 +1,3 @@
 module SolidityTypes
 
-type Contracts = SolidityProviderNS.SolidityTypes<"../build/contracts">
+type Contracts = SolidityProviderNS.SolidityTypesFromTruffle<"../truffle-config.js">
