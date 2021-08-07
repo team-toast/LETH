@@ -14,7 +14,7 @@ open Nethereum.Web3.Accounts
 open Nethereum.RPC.Eth.DTOs
 open Nethereum.Contracts
 open SolidityTypes
-open SolidityProviderNamespace
+open AbiTypeProvider.Common
 
 type System.String with
    member s1.icompare(s2: string) =
