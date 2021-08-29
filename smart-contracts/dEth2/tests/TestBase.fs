@@ -105,21 +105,11 @@ type EthereumConnection(nodeURI: string, privKey: string) =
     member this.ImpersonateAccount (address:string) =
         this.Web3.Client.SendRequestAsync(RpcRequest(0, "hardhat_impersonateAccount", address)) |> runNowWithoutResult
 
-    member this.MakeImpersonatedCallAsync weiValue gasLimit gasPrice addressFrom addressTo (functionArgs:#FunctionMessage) =
-        this.ImpersonateAccount addressFrom
-
-        let txInput = functionArgs.CreateTransactionInput(addressTo)
-        
-        txInput.From <- addressFrom
-        txInput.Gas <- gasLimit
-        txInput.GasPrice <- gasPrice
-        txInput.Value <- weiValue
-
-        this.Web3Unsigned.TransactionManager.SendTransactionAndWaitForReceiptAsync(txInput, tokenSource = null)
+    member this.MakeImpersonatedCallAsync (transactionInput:TransactionInput) =
+        this.ImpersonateAccount transactionInput.From
+        this.Web3Unsigned.TransactionManager.SendTransactionAndWaitForReceiptAsync(transactionInput, tokenSource = null)
        
-    member this.MakeImpersonatedCallWithNoEtherAsync addressFrom addressTo (functionArgs:#FunctionMessage) = this.MakeImpersonatedCallAsync (hexBigInt 0UL) (hexBigInt 9500000UL) (hexBigInt 0UL) addressFrom addressTo functionArgs
-    
-    member this.MakeImpersonatedCallWithNoEther addressFrom addressTo (functionArgs:#FunctionMessage) = this.MakeImpersonatedCallWithNoEtherAsync addressFrom addressTo functionArgs |> runNow
+    member this.MakeImpersonatedCallWithNoEther (transactionInput:TransactionInput) = this.MakeImpersonatedCallAsync transactionInput |> runNow
 
     member this.MakeSnapshotAsync () = GanacheEvmSnapshot(this.Web3.Client).SendRequestAsync()
     
@@ -152,7 +142,7 @@ type Debug(ethConn: EthereumConnection) =
         this.DebugContract.forward(toAddress, data.HexToByteArray())
 
     member this.DecodeForwardedEvents(receipt: TransactionReceipt) =
-        receipt.DecodeAllEvents<Contracts.DebugContract.ForwardedEventDTO>() |> Seq.map (fun i -> i.Event)
+        Contracts.DebugContract.ForwardedEventDTO.DecodeAllEvents receipt
 
     member this.BlockTimestamp:BigInteger = 
         this.DebugContract.blockTimestampQuery()

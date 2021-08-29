@@ -202,13 +202,22 @@ let ``dEth - getRatio - returns similar values as those directly retrieved from 
 [<InlineData(contractArg, 180, 220, 220, 1, 1, 1)>]
 let ``dEth - changeSettings - an authorised address can change the settings`` (addressArgument:string) (repaymentRatioExpected:int) (targetRatioExpected:int) (boostRatioExpected:int) (minRedemptionRatioExpected:int) (automationFeePercExpected:int) (riskLimitExpected:int) =
     restore ()
+    let contract = getDEthContract ()
 
-    let changeSettingsTxr = 
-        Contracts.dEthContract.changeSettingsFunction(
-            _minRedemptionRatio = bigint minRedemptionRatioExpected,
-            _automationFeePerc = bigint automationFeePercExpected, 
-            _riskLimit = bigint riskLimitExpected)
-        |> ethConn.MakeImpersonatedCallWithNoEther (mapInlineDataArgumentToAddress addressArgument dEthContract.Address) dEthContract.Address
+    let changeSettingsTin = 
+        contract.changeSettingsTransactionInput(
+            bigint minRedemptionRatioExpected, 
+            bigint automationFeePercExpected, 
+            bigint riskLimitExpected,
+            weiValue 0UL,
+            gasLlimit 9500000UL,
+            gasPrice 0UL
+        )
+
+    changeSettingsTin.From <- mapInlineDataArgumentToAddress addressArgument dEthContract.Address
+    changeSettingsTin.To <- dEthContract.Address
+
+    let changeSettingsTxr = ethConn.MakeImpersonatedCallWithNoEther changeSettingsTin
 
     changeSettingsTxr |> shouldSucceed
 
@@ -216,7 +225,7 @@ let ``dEth - changeSettings - an authorised address can change the settings`` (a
     dEthContract.automationFeePercQuery() |> should equal (bigint automationFeePercExpected)
     dEthContract.riskLimitQuery() |> should equal (bigint riskLimitExpected)
 
-    let event = changeSettingsTxr.DecodeAllEvents<Contracts.dEthContract.SettingsChangedEventDTO>() |> Seq.map (fun i -> i.Event) |> Seq.head
+    let event = Contracts.dEthContract.SettingsChangedEventDTO.DecodeAllEvents(changeSettingsTxr) |> Seq.head
     event._minRedemptionRatio |> should equal <| (bigint minRedemptionRatioExpected) * ratio
     event._automationFeePerc |> should equal <| bigint automationFeePercExpected
     event._riskLimit |> should equal <| bigint riskLimitExpected
@@ -276,7 +285,7 @@ let ``blah dEth - redeem - someone with a positive balance of dEth can redeem th
 
     balanceOf dEthContract redeemerConnection.Account.Address |> should equal (tokenBalanceBefore - tokensToRedeemBigInt)
 
-    let event = redeemTx.DecodeAllEvents<Contracts.dEthContract.RedeemedEventDTO>() |> Seq.map (fun i -> i.Event) |> Seq.head
+    let event = Contracts.dEthContract.RedeemedEventDTO.DecodeAllEvents redeemTx |> Seq.head
     event._redeemer |> shouldEqualIgnoringCase redeemerConnection.Account.Address
     event._receiver |> shouldEqualIgnoringCase receiverAddress
     event._tokensRedeemed |> should equal tokensToRedeemBigInt
@@ -332,7 +341,7 @@ let ``dEth - squanderMyEthForWorthlessBeansAndAgreeToTerms - anyone providing a 
     getInk () |> should equal (inkBefore + actualCollateralAddedExpected)
     getGulperEthBalance () |> should equal (gulperBalanceBefore + protocolFeeExpected)
 
-    let issuedEvent = squanderTxr.DecodeAllEvents<Contracts.dEthContract.IssuedEventDTO>() |> Seq.map (fun i -> i.Event) |> Seq.head
+    let issuedEvent = Contracts.dEthContract.IssuedEventDTO.DecodeAllEvents squanderTxr |> Seq.head
 
     issuedEvent._receiver |> shouldEqualIgnoringCase dEthRecipientAddress
     issuedEvent._suppliedCollateral |> should equal providedCollateralBigInt

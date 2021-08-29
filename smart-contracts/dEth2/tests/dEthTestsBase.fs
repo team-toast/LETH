@@ -4,6 +4,7 @@ open TestBase
 open Nethereum.Util
 open System.Numerics
 open SolidityTypes
+open AbiTypeProvider.Common
 
 module Array = 
     let removeFromEnd elem = Array.rev >> Array.skipWhile (fun i -> i = elem) >> Array.rev
@@ -104,9 +105,12 @@ let getDEthContract () =
 
 let getDEthContractEthConn () =
     let _, contract = getDEthContractFromOracle oracleContractMainnet true
-    
-    ethConn.MakeImpersonatedCallWithNoEther dEthMainnet makerManager (Contracts.ManagerLikeContract.giveFunction(Prop0 = cdpId, Prop1 = contract.Address)) 
-    |> shouldSucceed
+
+    let managerLikeContract = Contracts.ManagerLikeContract(makerManager, ethConn.GetWeb3())
+    let ti = managerLikeContract.giveTransactionInput(cdpId, contract.Address, gasPrice = gasPrice 0UL)
+    ti.From <- dEthMainnet
+
+    ethConn.MakeImpersonatedCallWithNoEther ti |> shouldSucceed
 
     // check that we now own the cdp.
     let makerManagerContract = Contracts.IMakerManagerAdvancedContract(makerManager, ethConn.GetWeb3)
@@ -167,7 +171,8 @@ let findActiveCDP ilkArg =
 let pokePIP pipAddress = 
     ethConn.TimeTravel <| Constants.hours * 2UL
     
-    ethConn.MakeImpersonatedCallWithNoEther ilkPIPAuthority pipAddress ( Contracts.IMakerOracleAdvancedContract.pokeFunction()) |> ignore
+    let contract = Contracts.IMakerOracleAdvancedContract(pipAddress, ethConn.GetWeb3)
+    contract.poke() |> ignore
 
 let calculateRedemptionValue tokensToRedeem totalSupply excessCollateral automationFeePerc =
     let redeemTokenSupplyPerc = tokensToRedeem * hundredPerc / totalSupply
