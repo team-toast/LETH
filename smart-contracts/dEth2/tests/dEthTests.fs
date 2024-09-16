@@ -13,14 +13,8 @@ open Nethereum.Hex.HexConvertors.Extensions
 open Nethereum.Web3.Accounts
 open Nethereum.RPC.Eth.DTOs
 open Nethereum.Contracts
-//open dEth2.Contracts.dEth.ContractDefinition
-//open dEth2.Contracts.MCDSaverProxy.ContractDefinition;
-
 open SolidityTypes
-
-//type SpotterIlksOutputDTO = dEth2.Contracts.ISpotter.ContractDefinition.IlksOutputDTO
-//type VatIlksOutputDTO = dEth2.Contracts.VatLike.ContractDefinition.IlksOutputDTO
-//type VatUrnsOutputDTO = dEth2.Contracts.VatLike.ContractDefinition.UrnsOutputDTO
+open AbiTypeProvider.Common
 
 type System.String with
    member s1.icompare(s2: string) =
@@ -32,11 +26,11 @@ let ``inits to provided parameters`` () =
     restore ()
 
     let (makerOracle, daiUsdOracle, ethUsdOracle) = (makeAccount().Address, makeAccount().Address, makeAccount().Address)
-    let contract = makeOracle makerOracle daiUsdOracle ethUsdOracle
+    let contract = Contracts.OracleContract(ethConn.GetWeb3, makerOracle, daiUsdOracle, ethUsdOracle)
 
-    shouldEqualIgnoringCase makerOracle (contract.Query<string> "makerOracle" [||])
-    shouldEqualIgnoringCase daiUsdOracle (contract.Query<string> "daiUsdOracle" [||])
-    shouldEqualIgnoringCase ethUsdOracle (contract.Query<string> "ethUsdOracle" [||])
+    shouldEqualIgnoringCase makerOracle (contract.makerOracleQuery ())
+    shouldEqualIgnoringCase daiUsdOracle (contract.daiUsdOracleQuery ())
+    shouldEqualIgnoringCase ethUsdOracle (contract.ethUsdOracleQuery ())
 
 [<Specification("Oracle", "getEthDaiPrice", 0)>]
 [<Theory>]
@@ -48,7 +42,7 @@ let ``price is correct given source prices within ten percents of one another`` 
 
     let (priceMaker, _, priceNonMakerDaiEth, _) = initOraclesDefault differencePercent
 
-    let price = oracleContract.Query<bigint> "getEthDaiPrice" [||]
+    let price = oracleContract.getEthDaiPriceQueryAsync() |> runNow
 
     let expected =
         if differencePercent <= 0.1M
@@ -68,23 +62,22 @@ let ``initializes with correct values and rights assigned`` () =
 
     // check the rights
     let functionName = Web3.Sha3("changeSettings(uint256,uint256,uint256)").Substring(0, 8).HexToByteArray()
-    let canCall = authority.Query<bool> "canCall" [|foundryTreasury; contract.Address; functionName |]
+    let canCall = authority.canCallQuery (foundryTreasury, contract.Address, functionName)
 
     // check the balance of initialRecipient
-    let balanceOfInitialRecipient = contract.Query<bigint> "balanceOf" [|initialRecipient|]
+    let balanceOfInitialRecipient = contract.balanceOfQuery(initialRecipient)
 
-    shouldEqualIgnoringCase gulper (contract.Query<string> "gulper" [||])
-    shouldEqualIgnoringCase proxyCache (contract.Query<string> "cache" [||])
-    should equal cdpId (contract.Query<bigint> "cdpId" [||])
-    shouldEqualIgnoringCase makerManager (contract.Query<string> "makerManager" [||])
-    shouldEqualIgnoringCase ethGemJoin (contract.Query<string> "ethGemJoin" [||])
-    shouldEqualIgnoringCase saverProxy (contract.Query<string> "saverProxy" [||])
-    shouldEqualIgnoringCase saverProxyActions (contract.Query<string> "saverProxyActions" [||])
-    shouldEqualIgnoringCase oracleContractMainnet.Address (contract.Query<string> "oracle" [||])
-    should equal true canCall
+    shouldEqualIgnoringCase gulper <| contract.gulperQuery()
+    shouldEqualIgnoringCase proxyCache <| contract.cacheQuery()
+    should equal cdpId <| contract.cdpIdQuery()
+    shouldEqualIgnoringCase makerManager <| contract.makerManagerQuery()
+    shouldEqualIgnoringCase ethGemJoin <| contract.ethGemJoinQuery()
+    shouldEqualIgnoringCase saverProxy <| contract.saverProxyQuery()
+    shouldEqualIgnoringCase saverProxyActions <| contract.saverProxyActionsQuery()
+    shouldEqualIgnoringCase oracleContractMainnet.Address <| contract.oracleQuery()
+    should be True canCall
     should greaterThan BigInteger.Zero balanceOfInitialRecipient
-    dEthContract.Query<bigint> "minRedemptionRatio" [||] |> should equal <| (bigint 160) * ratio
-
+    dEthContract.minRedemptionRatioQuery() |> should equal <| (bigint 160) * ratio
 
 [<Specification("dEth", "changeGulper", 0)>]
 [<Fact>]
@@ -92,8 +85,8 @@ let ``can be changed by owner`` () =
     restore ()
     let contract = getDEthContract ()
     let randomAddress = makeAccount().Address
-    contract.ExecuteFunction "changeGulper" [|randomAddress|] |> ignore
-    shouldEqualIgnoringCase randomAddress <| contract.Query<string> "gulper" [||]
+    contract.changeGulper(randomAddress) |> ignore
+    shouldEqualIgnoringCase randomAddress <| contract.gulperQuery()
 
 [<Specification("dEth", "changeGulper", 1)>]
 [<Fact>]
@@ -101,27 +94,26 @@ let ``cannot be changed by non-owner`` () =
     restore ()
     let contract = getDEthContract ()
     let account = Account(hardhatPrivKey2)
-    let oldGulper = contract.Query<string> "gulper" [||]
+    let oldGulper = contract.gulperQuery()
 
-    let debug = (Debug(EthereumConnection(hardhatURI, account.PrivateKey)))
-    let receipt = contract.ExecuteFunctionFrom "changeGulper" [|account.Address|] debug
+    let debug = Debug(EthereumConnection(hardhatURI, account.PrivateKey))
+    let data = contract.changeGulperData(account.Address)
+    let receipt = debug.Forward(contract.Address,  data)
     let forwardEvent = debug.DecodeForwardedEvents receipt |> Seq.head
     forwardEvent |> shouldRevertWithUnknownMessage
-    shouldEqualIgnoringCase oldGulper <| contract.Query<string> "gulper" [||]
+    shouldEqualIgnoringCase oldGulper <| contract.gulperQuery()
 
 let giveCDPToDSProxyTestBase shouldThrow = 
     restore ()
     let newContract = getDEthContract ()
 
     let executeGiveCDPFromPrivateKey shouldThrow =
-        let ethConn = 
-            if shouldThrow then 
-                (Debug(EthereumConnection(hardhatURI, hardhatPrivKey2)) :> IAsyncTxSender) 
-            else 
-                ethConn :> IAsyncTxSender
-
-        let giveCDPToDSProxyReceipt = dEthContract.ExecuteFunctionFrom "giveCDPToDSProxy" [|newContract.Address|] ethConn
-        giveCDPToDSProxyReceipt
+        if shouldThrow then 
+            let debug = Debug(EthereumConnection(hardhatURI, hardhatPrivKey2))
+            let data = dEthContract.giveCDPToDSProxyData(newContract.Address)
+            debug.Forward(newContract.Address, data)
+        else 
+            dEthContract.giveCDPToDSProxy(newContract.Address)
     
     let giveCDPToDSProxyReceipt = executeGiveCDPFromPrivateKey shouldThrow
 
@@ -130,7 +122,7 @@ let giveCDPToDSProxyTestBase shouldThrow =
         forwardEvent |> shouldRevertWithUnknownMessage
     else
         giveCDPToDSProxyReceipt.Succeeded () |> should equal true
-        dEthContract.Query "riskLimit" [||] |> should equal (BigInteger 0)
+        dEthContract.riskLimitQuery() |> should equal (BigInteger 0)
 
 
 [<Specification("dEth", "giveCDPToDSProxy", 0)>]
@@ -147,7 +139,7 @@ let ``dEth - getCollateral - returns similar values as those directly retrieved 
     restore ()
     let contract = getDEthContract ()
 
-    let getCollateralOutput = contract.QueryObj<Contracts.dEthContract.getCollateralOutputDTO> "getCollateral" [||]
+    let getCollateralOutput = contract.getCollateralQuery()
     let (_, priceRay, _, cdpDetailedInfoOutput, collateralDenominatedDebt, excessCollateral) = 
         getManuallyComputedCollateralValues oracleContractMainnet saverProxy cdpId
     
@@ -163,10 +155,10 @@ let ``dEth - getCollateralPriceRAY - returns similar values as those directly re
     restore ()
     let contract = getDEthContract ()
 
-    let ethDaiPrice = oracleContractMainnet.Query<bigint> "getEthDaiPrice" [||]
+    let ethDaiPrice = oracleContractMainnet.getEthDaiPriceQuery()
     let expectedRay = BigInteger.Pow(bigint 10, 9) * ethDaiPrice
 
-    let actualRay = contract.Query<bigint> "getCollateralPriceRAY" [||]
+    let actualRay = contract.getCollateralPriceRAYQuery()
     should equal expectedRay actualRay
 
 [<Specification("dEth", "getExcessCollateral", 0)>]
@@ -177,7 +169,7 @@ let ``dEth - getExcessCollateral - returns similar values as those directly retr
 
     let (_, _, _, _, _, excessCollateral) = getManuallyComputedCollateralValues oracleContractMainnet saverProxy cdpId
 
-    let actual = contract.Query<bigint> "getExcessCollateral" [||]
+    let actual = contract.getExcessCollateralQuery()
     should equal excessCollateral actual
 
 [<Specification("dEth", "getRatio", 0)>]
@@ -185,12 +177,12 @@ let ``dEth - getExcessCollateral - returns similar values as those directly retr
 let ``dEth - getRatio - returns similar values as those directly retrieved from the underlying contracts and calculated in F#`` () =
     restore ()
     let contract = getDEthContract ()
-    let saverProxyContract = ContractPlug(ethConn, (getABI "MCDSaverProxy"), saverProxy)
-    let manager = ContractPlug(ethConn, getABI "ManagerLike", makerManager)
+    let saverProxyContract = Contracts.MCDSaverProxyContract(saverProxy, ethConn.GetWeb3)
+    let manager = Contracts.ManagerLikeContract(makerManager, ethConn.GetWeb3)
 
-    let ilk = manager.Query<string> "ilks" [|cdpId|]
-    let price = saverProxyContract.Query<bigint> "getPrice" [|ilk|]
-    let getCdpInfoOutputDTO = saverProxyContract.QueryObj<Contracts.MCDSaverProxyContract.getCdpInfoOutputDTO> "getCdpInfo" [|manager.Address;cdpId;ilk|]
+    let ilk = manager.ilksQuery(cdpId)
+    let price = saverProxyContract.getPriceQuery (ilk)
+    let getCdpInfoOutputDTO = saverProxyContract.getCdpInfoQuery(manager.Address,cdpId,ilk)
 
     let expected = 
         if getCdpInfoOutputDTO.Prop1 = BigInteger.Zero 
@@ -199,7 +191,7 @@ let ``dEth - getRatio - returns similar values as those directly retrieved from 
         else 
             rdiv (wmul getCdpInfoOutputDTO.Prop0 price) getCdpInfoOutputDTO.Prop1
 
-    let actual = contract.Query<bigint> "getRatio" [||]
+    let actual = contract.getRatioQuery()
 
     should equal expected actual
 
@@ -210,21 +202,30 @@ let ``dEth - getRatio - returns similar values as those directly retrieved from 
 [<InlineData(contractArg, 180, 220, 220, 1, 1, 1)>]
 let ``dEth - changeSettings - an authorised address can change the settings`` (addressArgument:string) (repaymentRatioExpected:int) (targetRatioExpected:int) (boostRatioExpected:int) (minRedemptionRatioExpected:int) (automationFeePercExpected:int) (riskLimitExpected:int) =
     restore ()
+    let contract = getDEthContract ()
 
-    let changeSettingsTxr = 
-        Contracts.dEthContract.changeSettingsFunction(
-            _minRedemptionRatio = bigint minRedemptionRatioExpected,
-            _automationFeePerc = bigint automationFeePercExpected, 
-            _riskLimit = bigint riskLimitExpected)
-        |> ethConn.MakeImpersonatedCallWithNoEther (mapInlineDataArgumentToAddress addressArgument dEthContract.Address) dEthContract.Address
+    let changeSettingsTin = 
+        contract.changeSettingsTransactionInput(
+            bigint minRedemptionRatioExpected, 
+            bigint automationFeePercExpected, 
+            bigint riskLimitExpected,
+            weiValue 0UL,
+            gasLlimit 9500000UL,
+            gasPrice 0UL
+        )
+
+    changeSettingsTin.From <- mapInlineDataArgumentToAddress addressArgument dEthContract.Address
+    changeSettingsTin.To <- dEthContract.Address
+
+    let changeSettingsTxr = ethConn.MakeImpersonatedCallWithNoEther changeSettingsTin
 
     changeSettingsTxr |> shouldSucceed
 
-    dEthContract.Query<bigint> "minRedemptionRatio" [||] |> should equal <| (bigint minRedemptionRatioExpected) * ratio
-    dEthContract.Query<bigint> "automationFeePerc" [||] |> should equal (bigint automationFeePercExpected)
-    dEthContract.Query<bigint> "riskLimit" [||] |> should equal (bigint riskLimitExpected)
+    dEthContract.minRedemptionRatioQuery() |> should equal <| (bigint minRedemptionRatioExpected) * ratio
+    dEthContract.automationFeePercQuery() |> should equal (bigint automationFeePercExpected)
+    dEthContract.riskLimitQuery() |> should equal (bigint riskLimitExpected)
 
-    let event = changeSettingsTxr.DecodeAllEvents<Contracts.dEthContract.SettingsChangedEventDTO>() |> Seq.map (fun i -> i.Event) |> Seq.head
+    let event = Contracts.dEthContract.SettingsChangedEventDTO.DecodeAllEvents(changeSettingsTxr) |> Seq.head
     event._minRedemptionRatio |> should equal <| (bigint minRedemptionRatioExpected) * ratio
     event._automationFeePerc |> should equal <| bigint automationFeePercExpected
     event._riskLimit |> should equal <| bigint riskLimitExpected
@@ -235,8 +236,10 @@ let ``dEth - changeSettings - an authorised address can change the settings`` (a
 let ``dEth - changeSettings - an unauthorised address cannot change the automation settings`` (repaymentRatioExpected:int) (targetRatioExpected:int) (boostRatioExpected:int) (minRedemptionRatioExpected:int) (automationFeePercExpected:int) (riskLimitExpected:int) = 
     restore ()
 
-    Debug <| EthereumConnection(hardhatURI, makeAccountWithBalance().PrivateKey)
-    |> dEthContract.ExecuteFunctionFrom "changeSettings" [|minRedemptionRatioExpected;automationFeePercExpected;riskLimitExpected|]
+    let debug = Debug(EthereumConnection(hardhatURI, makeAccountWithBalance().PrivateKey))
+    let data = dEthContract.changeSettingsData(bigint minRedemptionRatioExpected, bigint automationFeePercExpected, bigint riskLimitExpected)
+
+    debug.Forward(dEthContract.Address, data)
     |> debug.DecodeForwardedEvents
     |> Seq.head
     |> shouldRevertWithUnknownMessage // To clarify : We get no message because the auth code reverts without providing one
@@ -259,7 +262,7 @@ let ``blah dEth - redeem - someone with a positive balance of dEth can redeem th
 
     tokensToRedeemBigInt |> should lessThan tokensToTransferBigInt
 
-    dEthContract.ExecuteFunction "transfer" [|redeemerConnection.Account.Address;tokensToTransferBigInt|] |> shouldSucceed
+    dEthContract.transfer(redeemerConnection.Account.Address,tokensToTransferBigInt) |> shouldSucceed
 
     let tokenBalanceBefore = balanceOf dEthContract redeemerConnection.Account.Address
 
@@ -273,7 +276,8 @@ let ``blah dEth - redeem - someone with a positive balance of dEth can redeem th
     let (protocolFeeExpected, automationFeeExpected, collateralRedeemedExpected, collateralReturnedExpected) = 
         queryStateAndCalculateRedemptionValue dEthContract tokensToRedeemBigInt
 
-    let redeemTx = redeemerConnection |> dEthContract.ExecuteFunctionFrom "redeem" [|receiverAddress;tokensToRedeemBigInt|]
+    let redeemerContract = Contracts.dEthContract(dEthContract.Address, redeemerConnection.GetWeb3)
+    let redeemTx = redeemerContract.redeem(receiverAddress,tokensToRedeemBigInt)
     redeemTx |> shouldSucceed
 
     receiverAddress |> ethConn.GetEtherBalance |> should equal collateralReturnedExpected
@@ -281,7 +285,7 @@ let ``blah dEth - redeem - someone with a positive balance of dEth can redeem th
 
     balanceOf dEthContract redeemerConnection.Account.Address |> should equal (tokenBalanceBefore - tokensToRedeemBigInt)
 
-    let event = redeemTx.DecodeAllEvents<Contracts.dEthContract.RedeemedEventDTO>() |> Seq.map (fun i -> i.Event) |> Seq.head
+    let event = Contracts.dEthContract.RedeemedEventDTO.DecodeAllEvents redeemTx |> Seq.head
     event._redeemer |> shouldEqualIgnoringCase redeemerConnection.Account.Address
     event._receiver |> shouldEqualIgnoringCase receiverAddress
     event._tokensRedeemed |> should equal tokensToRedeemBigInt
@@ -293,11 +297,13 @@ let ``blah dEth - redeem - someone with a positive balance of dEth can redeem th
 [<Specification("dEth", "redeem", 1)>]
 [<Theory>]
 [<InlineData(10000)>]
-let ``dEth - redeem - someone without a balance can never redeem Ether`` tokensAmount =
+let ``dEth - redeem - someone without a balance can never redeem Ether`` (tokensAmount: int) =
     restore ()
 
-    Debug <| EthereumConnection(hardhatURI, makeAccountWithBalance().PrivateKey) // the balance is needed for gas vs for sending ether value.
-    |> dEthContract.ExecuteFunctionFrom "redeem" [|makeAccount().Address;tokensAmount|]
+    let debug = Debug(EthereumConnection(hardhatURI, makeAccountWithBalance().PrivateKey)) // the balance is needed for gas vs for sending ether value.
+    let data = dEthContract.redeemData(makeAccount().Address, bigint tokensAmount)
+    
+    debug.Forward(dEthContract.Address, data)
     |> debug.DecodeForwardedEvents
     |> Seq.head
     |> shouldRevertWithMessage "ERC20: burn amount exceeds balance"
@@ -319,8 +325,8 @@ let ``dEth - squanderMyEthForWorthlessBeansAndAgreeToTerms - anyone providing a 
     let inkBefore = getInk ()
     let gulperBalanceBefore = getGulperEthBalance ()
     
-    dEthContract.Query<bigint> "getExcessCollateral" [||]
-    |> should lessThan (dEthContract.Query<bigint> "riskLimit" [||] + providedCollateralBigInt)
+    dEthContract.getExcessCollateralQuery()
+    |> should lessThan (dEthContract.riskLimitQuery() + providedCollateralBigInt)
     
     let (protocolFeeExpected, automationFeeExpected, actualCollateralAddedExpected, accreditedCollateralExpected, tokensIssuedExpected) = 
         queryStateAndCalculateIssuanceAmount dEthContract providedCollateralBigInt
@@ -328,14 +334,14 @@ let ``dEth - squanderMyEthForWorthlessBeansAndAgreeToTerms - anyone providing a 
     let dEthRecipientAddress = ethConn.Account.Address
     let balanceBefore = balanceOf dEthContract dEthRecipientAddress
 
-    let squanderTxr = dEthContract.ExecuteFunctionFromAsyncWithValue providedCollateralBigInt "squanderMyEthForWorthlessBeansAndAgreeToTerms" [|dEthRecipientAddress|] ethConn |> runNow
+    let squanderTxr = dEthContract.squanderMyEthForWorthlessBeansAndAgreeToTerms(dEthRecipientAddress, weiValue providedCollateralBigInt)
     squanderTxr |> shouldSucceed
 
     balanceOf dEthContract dEthRecipientAddress |> should equal (balanceBefore + tokensIssuedExpected)
     getInk () |> should equal (inkBefore + actualCollateralAddedExpected)
     getGulperEthBalance () |> should equal (gulperBalanceBefore + protocolFeeExpected)
 
-    let issuedEvent = squanderTxr.DecodeAllEvents<Contracts.dEthContract.IssuedEventDTO>() |> Seq.map (fun i -> i.Event) |> Seq.head
+    let issuedEvent = Contracts.dEthContract.IssuedEventDTO.DecodeAllEvents squanderTxr |> Seq.head
 
     issuedEvent._receiver |> shouldEqualIgnoringCase dEthRecipientAddress
     issuedEvent._suppliedCollateral |> should equal providedCollateralBigInt
@@ -352,8 +358,8 @@ let ``dEth - squanderMyEthForWorthlessBeansAndAgreeToTerms - the riskLevel canno
 
     makeRiskLimitLessThanExcessCollateral dEthContract |> shouldSucceed
 
-    debug
-    |> dEthContract.ExecuteFunctionFrom "squanderMyEthForWorthlessBeansAndAgreeToTerms" [|makeAccount().Address|]
+    let data = dEthContract.squanderMyEthForWorthlessBeansAndAgreeToTermsData(makeAccount().Address)
+    debug.Forward(dEthContract.Address, data)
     |> debug.DecodeForwardedEvents
     |> Seq.head
     |> shouldRevertWithMessage "risk limit exceeded"

@@ -1,3 +1,3 @@
 module SolidityTypes
 
-type Contracts = SolidityProviderNS.SolidityTypes<"../build/contracts">
+type Contracts = AbiTypeProvider.AbiTypes<"../build/contracts">

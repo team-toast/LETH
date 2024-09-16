@@ -18,7 +18,6 @@ open FsUnit.Xunit
 open Microsoft.FSharp.Control
 open Newtonsoft.Json
 open Newtonsoft.Json.Linq
-//open Foundry.Contracts.Debug.ContractDefinition
 open Constants
 open Microsoft.Extensions.Configuration
 open SolidityTypes
@@ -65,14 +64,6 @@ let inline runNow task =
 let inline runNowWithoutResult (task:Task) =
     task |> Async.AwaitTask |> Async.RunSynchronously
 
-type Abi(filename) =
-    member val JsonString = File.OpenText(filename).ReadToEnd()
-    member this.AbiString = JsonConvert.DeserializeObject<JObject>(this.JsonString).GetValue("abi").ToString()
-    member this.Bytecode = JsonConvert.DeserializeObject<JObject>(this.JsonString).GetValue("bytecode").ToString()
-
-type IAsyncTxSender =
-    abstract member SendTxAsync : string -> BigInteger -> string -> Task<TransactionReceipt>
-
 type EthereumConnection(nodeURI: string, privKey: string) =
     
     // this is needed to reset nonce.
@@ -87,28 +78,8 @@ type EthereumConnection(nodeURI: string, privKey: string) =
     member this.Account with get() = web3.TransactionManager.Account
     member this.Web3 with get() = web3
     member this.Web3Unsigned with get() = web3Unsigned
-
-    interface IAsyncTxSender with
-        member this.SendTxAsync toAddress value data = 
-            let input: TransactionInput =
-                TransactionInput(
-                    data, 
-                    toAddress, 
-                    this.Account.Address, 
-                    this.Gas,
-                    this.GasPrice, 
-                    HexBigInteger(value))
-            this.Web3.Eth.TransactionManager.SendTransactionAndWaitForReceiptAsync(input, null)
-
-    member this.DeployContractAsync (abi: Abi) (arguments: obj array) =
-        this.Web3.Eth.DeployContract.SendRequestAndWaitForReceiptAsync(
-            abi.AbiString,
-            abi.Bytecode,
-            this.Account.Address,
-            this.Gas, this.GasPrice,
-            hexBigInt 0UL,
-            null,
-            arguments)
+    member this.GetWeb3() = web3
+    member this.GetWeb3Unsigned() = web3Unsigned
 
     member this.TimeTravel seconds =
         this.Web3.Client.SendRequestAsync(method = "evm_increaseTime", paramList = [| seconds |]) 
@@ -132,30 +103,20 @@ type EthereumConnection(nodeURI: string, privKey: string) =
         this.SendEtherAsync address amount |> runNow
 
     member this.ImpersonateAccount (address:string) =
-        this.Web3.Client.SendRequestAsync(new RpcRequest(0, "hardhat_impersonateAccount", address)) |> runNowWithoutResult
+        this.Web3.Client.SendRequestAsync(RpcRequest(0, "hardhat_impersonateAccount", address)) |> runNowWithoutResult
 
-    member this.MakeImpersonatedCallAsync weiValue gasLimit gasPrice addressFrom addressTo (functionArgs:#FunctionMessage) =
-        this.ImpersonateAccount addressFrom
-
-        let txInput = functionArgs.CreateTransactionInput(addressTo)
-        
-        txInput.From <- addressFrom
-        txInput.Gas <- gasLimit
-        txInput.GasPrice <- gasPrice
-        txInput.Value <- weiValue
-
-        this.Web3Unsigned.TransactionManager.SendTransactionAndWaitForReceiptAsync(txInput, tokenSource = null)
+    member this.MakeImpersonatedCallAsync (transactionInput:TransactionInput) =
+        this.ImpersonateAccount transactionInput.From
+        this.Web3Unsigned.TransactionManager.SendTransactionAndWaitForReceiptAsync(transactionInput, tokenSource = null)
        
-    member this.MakeImpersonatedCallWithNoEtherAsync addressFrom addressTo (functionArgs:#FunctionMessage) = this.MakeImpersonatedCallAsync (hexBigInt 0UL) (hexBigInt 9500000UL) (hexBigInt 0UL) addressFrom addressTo functionArgs
-    
-    member this.MakeImpersonatedCallWithNoEther addressFrom addressTo (functionArgs:#FunctionMessage) = this.MakeImpersonatedCallWithNoEtherAsync addressFrom addressTo functionArgs |> runNow
+    member this.MakeImpersonatedCallWithNoEther (transactionInput:TransactionInput) = this.MakeImpersonatedCallAsync transactionInput |> runNow
 
     member this.MakeSnapshotAsync () = GanacheEvmSnapshot(this.Web3.Client).SendRequestAsync()
     
     member this.MakeSnapshot = this.MakeSnapshotAsync >> runNow
 
     member this.RestoreSnapshot snapshotID =
-        this.Web3.Client.SendRequestAsync(new RpcRequest(1, "evm_revert", [|snapshotID|])) |> runNowWithoutResult
+        this.Web3.Client.SendRequestAsync(RpcRequest(1, "evm_revert", [|snapshotID|])) |> runNowWithoutResult
         web3 <- getWeb3()
         web3Unsigned <- getWeb3Unsigned()
 
@@ -173,67 +134,18 @@ let profileMe f =
     (f.GetType(), duration) |> printf "(Function, Duration) = %A\n"
     result
 
-
-type ContractPlug(ethConn: EthereumConnection, abi: Abi, address) =
-    member val public Address = address
-
-    member val public Contract = 
-        ethConn.Web3.Eth.GetContract(abi.AbiString, address)
-
-    member this.Function functionName = 
-        this.Contract.GetFunction(functionName)
-
-    member this.QueryObjAsync<'a when 'a: (new: unit -> 'a)> functionName arguments = 
-        (this.Function functionName).CallDeserializingToObjectAsync<'a> (arguments)
-
-    member this.QueryObj<'a when 'a: (new: unit -> 'a)> functionName arguments = 
-        this.QueryObjAsync<'a> functionName arguments |> runNow
-
-    member this.QueryAsync<'a> functionName arguments = 
-        (this.Function functionName).CallAsync<'a> (arguments)
-
-    member this.Query<'a> functionName arguments = 
-        this.QueryAsync<'a> functionName arguments |> runNow
-
-    member this.FunctionData functionName arguments = 
-        (this.Function functionName).GetData(arguments)
-
-    member this.ExecuteFunctionFromAsyncWithValue value functionName arguments (connection:IAsyncTxSender) = 
-        this.FunctionData functionName arguments |> connection.SendTxAsync this.Address value
-
-    member this.ExecuteFunctionFromAsync = this.ExecuteFunctionFromAsyncWithValue (BigInteger(0))
-
-    member this.ExecuteFunctionFrom functionName arguments connection = 
-        this.ExecuteFunctionFromAsync functionName arguments connection |> runNow
-
-    member this.ExecuteFunctionAsync functionName arguments = 
-        this.ExecuteFunctionFromAsync functionName arguments (upcast ethConn)
-
-    member this.ExecuteFunction functionName arguments = 
-        this.ExecuteFunctionAsync functionName arguments |> runNow
-
 type Debug(ethConn: EthereumConnection) =
     member val public EthConn = ethConn
-    member val public AsyncTxSender = ethConn :> IAsyncTxSender
+    member val public  DebugContract = Contracts.DebugContract(ethConn.GetWeb3)
 
-    member val public  ContractPlug =
-        let abi = Abi("../../../../build/contracts/Debug.json")
-        let deployTxReceipt = ethConn.DeployContractAsync abi [||] |> runNow
-        ContractPlug(ethConn, abi, deployTxReceipt.ContractAddress)
-
-    interface IAsyncTxSender with
-        member this.SendTxAsync(toAddress:string) (value:BigInteger) (data: string):Threading.Tasks.Task<TransactionReceipt> = 
-            let data =
-                this.ContractPlug.FunctionData "forward"
-                    [| toAddress
-                       data.HexToByteArray() |]
-            data |> this.AsyncTxSender.SendTxAsync this.ContractPlug.Address value
+    member this.Forward(toAddress, data:string) =
+        this.DebugContract.forward(toAddress, data.HexToByteArray())
 
     member this.DecodeForwardedEvents(receipt: TransactionReceipt) =
-        receipt.DecodeAllEvents<Contracts.DebugContract.ForwardedEventDTO>() |> Seq.map (fun i -> i.Event)
+        Contracts.DebugContract.ForwardedEventDTO.DecodeAllEvents receipt
 
     member this.BlockTimestamp:BigInteger = 
-        this.ContractPlug.Query "blockTimestamp" [||]
+        this.DebugContract.blockTimestampQuery()
 
 type Contracts.DebugContract.ForwardedEventDTO with
     member this.ResultAsRevertMessage =
@@ -264,7 +176,6 @@ let isRinkeby rinkeby notRinkeby =
 
 let ethConn =
     isRinkeby (EthereumConnection(rinkebyURI, rinkebyPrivKey)) (EthereumConnection(hardhatURI, hardhatPrivKey))
-
 
 let shouldEqualIgnoringCase (a: string) (b: string) =
     let aString = a |> string
@@ -302,13 +213,6 @@ let makeAccountWithBalance () =
 
     account
 
-let getABI str = Abi(__SOURCE_DIRECTORY__ + (sprintf "/../build/contracts/%s.json" str))
-
-let makeContract parameters contractName =
-    let abi = getABI contractName
-    let tx = ethConn.DeployContractAsync abi parameters |> runNow
-    ContractPlug(ethConn, abi, tx.ContractAddress)
-
 let padAddress (address:string) = 
     let addressWithout0x = address.Remove(0, 2)
     let bytesToPad = (32 - addressWithout0x.Length / 2)
@@ -334,8 +238,8 @@ let bigintDifference a b (precision:int) =
 let toE18 (v:float) = 
     BigDecimal(decimal v) * (toBigDecimal E18) |> toBigInt
 
-let balanceOf (contract:ContractPlug) address = 
-    contract.Query "balanceOf" [|address|]
+let balanceOf (contract:Contracts.dEthContract) address = 
+    contract.balanceOfQuery(address)
 
 // reset the state to a particular block every time we start the tests to avoid having different state on different runs
 let alchemyKey = ConfigurationBuilder().AddUserSecrets<HardhatForkInput>().Build().["AlchemyKey"]
